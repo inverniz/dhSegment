@@ -242,7 +242,10 @@ def model_fn(mode, features, labels, params):
     # ----------
     if mode == tf.estimator.ModeKeys.EVAL:
         if prediction_type == PredictionType.CLASSIFICATION:
-            metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels)}
+            metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels),
+                       'eval/precision': tf.metrics.precision(labels, predictions=prediction_labels),
+                       'eval/recall': tf.metrics.recall(labels, predictions=prediction_labels)
+                      }
         elif prediction_type == PredictionType.REGRESSION:
             metrics = {'eval/accuracy': tf.metrics.mean_squared_error(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.MULTILABEL:
