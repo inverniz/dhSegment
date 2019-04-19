@@ -250,7 +250,7 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
                              
             if data_augmentation:
                 dataset = dataset.map(_augment_data_fn_classification, num_threads)
-                dataset = dataset.map(_assign_color_to_class_id_classification, num_threads)
+            dataset = dataset.map(_assign_color_to_class_id_classification, num_threads)
 
         # Save original size of images
         dataset = dataset.map(lambda d: {'shapes': tf.shape(d['images'])[:2], **d})
