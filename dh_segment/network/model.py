@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
+import numpy as np
 import tensorflow as tf
 from ..utils import ModelParams
 from tensorflow.contrib import layers  # TODO migration to tf.layers ?
 from tensorflow.contrib.slim.nets import resnet_v1
 from tensorflow.contrib.slim import arg_scope
-from .pretrained_models import vgg_16_fn, resnet_v1_50_fn
+from .pretrained_models import vgg_16_fn, resnet_v1_50_fn, resnet_v1_50_fn_classification
 from collections import OrderedDict
 
 
@@ -150,7 +151,7 @@ def inference_resnet_v1_50(images, params, num_classes, use_batch_norm=False, we
     resnet_net, intermediate_layers = resnet_v1_50_fn(images, is_training=False, blocks=blocks_needed,
                                                       weight_decay=weight_decay, renorm=False,
                                                       corrected_version=params.correct_resnet_version)
-
+    
     # Upsampling
     with tf.variable_scope('upsampling'):
         with arg_scope([layers.conv2d],
@@ -203,8 +204,38 @@ def inference_resnet_v1_50(images, params, num_classes, use_batch_norm=False, we
                                kernel_size=[1, 1],
                                scope="conv{}-logits".format(n_layer))
 
-    return logits
+    return logits, intermediate_layers
 
+def inference_resnet_v1_50_classification(images, params, num_classes, use_batch_norm=False, weight_decay=0.0,
+                           is_training=False) -> tf.Tensor:
+    if use_batch_norm:
+        if params.batch_renorm:
+            renorm_clipping = {'rmax': 100, 'rmin': 0.1, 'dmax': 1}
+            renorm_momentum = 0.98
+        else:
+            renorm_clipping = None
+            renorm_momentum = 0.99
+        batch_norm_fn = lambda x: tf.layers.batch_normalization(x, axis=-1, training=is_training, name='batch_norm',
+                                                                renorm=params.batch_renorm,
+                                                                renorm_clipping=renorm_clipping,
+                                                                renorm_momentum=renorm_momentum)
+    else:
+        batch_norm_fn = None
+
+    # Original ResNet for classification
+    resnet_net, endpoints = resnet_v1_50_fn_classification(images,
+                                            is_training=False,
+                                            weight_decay=weight_decay,
+                                            renorm=False
+                                            )
+    n_layer = 1
+    logits = layers.conv2d(inputs=resnet_net,
+                               num_outputs=num_classes,
+                               activation_fn=None,
+                               kernel_size=[1, 1],
+                               scope="conv{}-logits".format(n_layer))
+    
+    return logits, endpoints
 
 def conv_bn_layer(input_tensor, kernel_size, output_channels, stride=1, bn=False,
                   is_training=True, relu=True):

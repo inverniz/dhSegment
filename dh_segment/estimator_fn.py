@@ -2,7 +2,7 @@ import tensorflow as tf
 from .utils import PredictionType, ModelParams, TrainingParams, \
     class_to_label_image, multiclass_to_label_image
 import numpy as np
-from .network.model import inference_resnet_v1_50, inference_vgg16, inference_u_net
+from .network.model import inference_resnet_v1_50,inference_resnet_v1_50_classification, inference_vgg16, inference_u_net
 
 
 def model_fn(mode, features, labels, params):
@@ -29,13 +29,24 @@ def model_fn(mode, features, labels, params):
         key_restore_model = 'vgg_16'
 
     elif model_params.pretrained_model_name == 'resnet50':
-        network_output = inference_resnet_v1_50(input_images,
+        # Modified by me: added 'selected_intermediate_layers'
+        network_output, selected_intermediate_layers = inference_resnet_v1_50(input_images,
                                                 model_params,
                                                 model_params.n_classes,
                                                 use_batch_norm=model_params.batch_norm,
                                                 weight_decay=model_params.weight_decay,
                                                 is_training=(mode == tf.estimator.ModeKeys.TRAIN)
                                                 )
+        key_restore_model = 'resnet_v1_50'
+    #added for classification
+    elif model_params.pretrained_model_name == 'resnet50_classification':
+        network_output, selected_intermediate_layers = inference_resnet_v1_50_classification(input_images,
+                                            model_params,
+                                            model_params.n_classes,
+                                            use_batch_norm=model_params.batch_norm,
+                                            weight_decay=model_params.weight_decay,
+                                            is_training=(mode == tf.estimator.ModeKeys.TRAIN)
+                                            )
         key_restore_model = 'resnet_v1_50'
     elif model_params.pretrained_model_name == 'unet':
         network_output = inference_u_net(input_images,
@@ -63,17 +74,35 @@ def model_fn(mode, features, labels, params):
         init_fn = None
 
     if mode == tf.estimator.ModeKeys.PREDICT:
-        margin = training_params.training_margin
+        pass
+        #margin = training_params.training_margin
         # Crop padding
-        if margin > 0:
-            network_output = network_output[:, margin:-margin, margin:-margin, :]
+        #if margin > 0:
+        #    network_output = network_output[:, margin:-margin, margin:-margin, :]
 
     # Prediction
     # ----------
+    # Added by me: second dictionary
+    intermediate_layers_dict = {}
     if prediction_type == PredictionType.CLASSIFICATION:
-        prediction_probs = tf.nn.softmax(network_output, name='softmax')
-        prediction_labels = tf.argmax(network_output, axis=-1, name='label_preds')
+        #squeezed for image classification
+        #network_output = tf.Print(network_output, [tf.nn.softmax(tf.squeeze(network_output))])
+        prediction_probs = tf.nn.softmax(tf.squeeze(network_output), name='softmax')
+        prediction_labels = tf.argmax(tf.squeeze(network_output), axis=-1, name='label_preds')
         predictions = {'probs': prediction_probs, 'labels': prediction_labels}
+        
+        # Added by me: second dictionary
+        desired_endpoints = [
+                'resnet_v1_50/conv1',
+                'resnet_v1_50/block1/unit_3/bottleneck_v1',
+                'resnet_v1_50/block2/unit_4/bottleneck_v1',
+                'resnet_v1_50/block3/unit_6/bottleneck_v1',
+                'resnet_v1_50/block4/unit_3/bottleneck_v1'
+            ]
+        
+        #added by me, commented due to classification
+        for index, selected_intermediate_layer in enumerate(selected_intermediate_layers):
+            intermediate_layers_dict[desired_endpoints[index]] = selected_intermediate_layer
     elif prediction_type == PredictionType.REGRESSION:
         predictions = {'output_values': network_output}
         prediction_labels = network_output
@@ -90,15 +119,19 @@ def model_fn(mode, features, labels, params):
     if mode in [tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL]:
         regularized_loss = tf.losses.get_regularization_loss()
         if prediction_type == PredictionType.CLASSIFICATION:
-            onehot_labels = tf.one_hot(indices=labels, depth=model_params.n_classes)
+            #onehot_labels = tf.one_hot(indices=labels, depth=model_params.n_classes)
+            #network_output = tf.Print(network_output, [network_output])
             with tf.name_scope("loss"):
-                per_pixel_loss = tf.nn.softmax_cross_entropy_with_logits(logits=network_output,
-                                                                         labels=onehot_labels, name='per_pixel_loss')
-                if training_params.focal_loss_gamma > 0.0:
-                    # Probability per pixel of getting the correct label
-                    probs_correct_label = tf.reduce_max(tf.multiply(prediction_probs, onehot_labels))
-                    modulation = tf.pow((1. - probs_correct_label), training_params.focal_loss_gamma)
-                    per_pixel_loss = tf.multiply(per_pixel_loss, modulation)
+                per_pixel_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=tf.squeeze(network_output),
+                                                                         labels=labels, name='per_pixel_loss')
+                #per_pixel_loss = tf.nn.softmax_cross_entropy_with_logits(logits=network_output,
+                #                                                         labels=onehot_labels, name='per_pixel_loss')
+           
+                #if training_params.focal_loss_gamma > 0.0:
+                #    # Probability per pixel of getting the correct label
+                #    probs_correct_label = tf.reduce_max(tf.multiply(prediction_probs, onehot_labels))
+                #    modulation = tf.pow((1. - probs_correct_label), training_params.focal_loss_gamma)
+                #    per_pixel_loss = tf.multiply(per_pixel_loss, modulation)
 
                 if training_params.weights_labels is not None:
                     weight_mask = tf.reduce_sum(
@@ -133,7 +166,8 @@ def model_fn(mode, features, labels, params):
                 output, shape = _in
                 return tf.reduce_mean(output[margin:shape[0] - margin, margin:shape[1] - margin])
 
-            per_img_loss = tf.map_fn(_fn, (per_pixel_loss, input_shapes), dtype=tf.float32)
+            #per_img_loss = tf.map_fn(_fn, (per_pixel_loss, input_shapes), dtype=tf.float32)
+            per_img_loss = per_pixel_loss
             loss = tf.reduce_mean(per_img_loss, name='loss')
 
         loss += regularized_loss
@@ -169,20 +203,21 @@ def model_fn(mode, features, labels, params):
             tf.summary.scalar('losses/loss_per_batch', loss)
             tf.summary.scalar('losses/regularized_loss', regularized_loss)
             if prediction_type == PredictionType.CLASSIFICATION:
-                tf.summary.image('output/prediction',
-                                 tf.image.resize_images(class_to_label_image(prediction_labels, classes_file),
-                                                        tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
-                                 max_outputs=1)
-                if model_params.n_classes == 3:
-                    tf.summary.image('output/probs',
-                                     tf.image.resize_images(prediction_probs[:, :, :, :],
-                                                            tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
-                                     max_outputs=1)
-                if model_params.n_classes == 2:
-                    tf.summary.image('output/probs',
-                                     tf.image.resize_images(prediction_probs[:, :, :, 1:2],
-                                                            tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
-                                     max_outputs=1)
+                pass
+                #tf.summary.image('output/prediction',
+                #                 tf.image.resize_images(class_to_label_image(prediction_labels, classes_file),
+                #                                        tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
+                #                 max_outputs=1)
+                #if model_params.n_classes == 3:
+                #    tf.summary.image('output/probs',
+                #                     tf.image.resize_images(prediction_probs[:, :, :, :],
+                #                                            tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
+                #                     max_outputs=1)
+                #if model_params.n_classes == 2:
+                #    tf.summary.image('output/probs',
+                #                     tf.image.resize_images(prediction_probs[:, :, :, 1:2],
+                #                                            tf.cast(tf.shape(network_output)[1:3] / 3, tf.int32)),
+                #                     max_outputs=1)
             elif prediction_type == PredictionType.REGRESSION:
                 summary_img = tf.nn.relu(network_output)[:, :, :, 0:1]  # Put negative values to zero
                 tf.summary.image('output/prediction', summary_img, max_outputs=1)
@@ -207,20 +242,14 @@ def model_fn(mode, features, labels, params):
     # ----------
     if mode == tf.estimator.ModeKeys.EVAL:
         if prediction_type == PredictionType.CLASSIFICATION:
-            metrics = {
-                'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels),
-                'eval/mIOU': tf.metrics.mean_iou(labels, prediction_labels, num_classes=model_params.n_classes,)
-                                                 # weights=tf.cast(training_params.weights_evaluation_miou, tf.float32))
-            }
+            metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.REGRESSION:
             metrics = {'eval/accuracy': tf.metrics.mean_squared_error(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.MULTILABEL:
             metrics = {'eval/MSE': tf.metrics.mean_squared_error(tf.cast(labels, tf.float32),
                                                                  predictions=prediction_probs),
                        'eval/accuracy': tf.metrics.accuracy(tf.cast(labels, tf.bool),
-                                                            predictions=tf.cast(prediction_labels, tf.bool)),
-                       'eval/mIOU': tf.metrics.mean_iou(labels, prediction_labels, num_classes=model_params.n_classes)
-                                                        # weights=training_params.weights_evaluation_miou)
+                                                            predictions=tf.cast(prediction_labels, tf.bool))
                        }
     else:
         metrics = None
@@ -233,21 +262,30 @@ def model_fn(mode, features, labels, params):
 
         if 'original_shape' in features.keys():
             with tf.name_scope('ResizeOutput'):
-                resized_predictions = dict()
+          #      resized_predictions = dict()
                 # Resize all the elements in predictions
-                for k, v in predictions.items():
+           #     for k, v in predictions.items():
                     # Labels is rank-3 so we need to be careful in using tf.image.resize_images
+            #        assert isinstance(v, tf.Tensor)
+             #       v2 = v if len(v.get_shape()) == 4 else v[:, :, :, None]
+              #      v2 = tf.image.resize_images(v2, features['original_shape'],
+                #                                method=tf.image.ResizeMethod.BILINEAR if v.dtype == tf.float32
+                #                                else tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+               #     v2 = v2 if len(v.get_shape()) == 4 else v2[:, :, :, 0]
+               #     resized_predictions[k] = v2
+               # export_outputs['resized_output'] = tf.estimator.export.PredictOutput(resized_predictions)
+                
+                #added by me: second dictionary
+                intermediate_predictions = dict()
+                for k,v in intermediate_layers_dict.items():
                     assert isinstance(v, tf.Tensor)
-                    v2 = v if len(v.get_shape()) == 4 else v[:, :, :, None]
-                    v2 = tf.image.resize_images(v2, features['original_shape'],
-                                                method=tf.image.ResizeMethod.BILINEAR if v.dtype == tf.float32
-                                                else tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-                    v2 = v2 if len(v.get_shape()) == 4 else v2[:, :, :, 0]
-                    resized_predictions[k] = v2
-                export_outputs['resized_output'] = tf.estimator.export.PredictOutput(resized_predictions)
+                    intermediate_predictions[k] = v
+                export_outputs['intermediate_layers'] = tf.estimator.export.PredictOutput(intermediate_predictions)
+                    
 
             predictions['original_shape'] = features['original_shape']
-
+        #added by me: second dictionary
+        predictions.update(intermediate_layers_dict)
         export_outputs['output'] = tf.estimator.export.PredictOutput(predictions)
 
         export_outputs[tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY] = export_outputs['output']

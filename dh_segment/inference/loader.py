@@ -50,7 +50,7 @@ class LoadedModel:
         self.sess = tf.get_default_session()
         loaded_model = tf.saved_model.loader.load(self.sess, ['serve'], model_dir)
         assert 'serving_default' in list(loaded_model.signature_def)
-
+        
         input_dict, output_dict = _signature_def_to_tensors(loaded_model.signature_def[signature_def_key])
         assert input_dict_key in input_dict.keys(), "{} not present in input_keys, " \
                                                     "possible values: {}".format(input_dict_key, input_dict.keys())
@@ -90,6 +90,7 @@ class LoadedModel:
                 desired_output = self._output_dict[prediction_key]
             else:
                 desired_output = self._output_dict
+            
             return self.sess.run(desired_output, feed_dict={self._input_tensor: input_tensor})
 
     def predict_with_tiles(self, filename: str, resized_size: int=None, tile_size: int=500,

@@ -121,3 +121,32 @@ def resnet_v1_50_fn(input_tensor: tf.Tensor, is_training=False, blocks=4, weight
             intermediate_layers.append(endpoints[d])
 
         return net, intermediate_layers
+    
+## added for classification
+def resnet_v1_50_fn_classification(input_tensor: tf.Tensor, is_training=False, weight_decay=0.0001,
+                    renorm=True) -> tf.Tensor:
+    with slim.arg_scope(nets.resnet_v1.resnet_arg_scope(weight_decay=weight_decay, batch_norm_decay=0.999)), \
+        slim.arg_scope([layers.batch_norm], renorm_decay=0.95, renorm=renorm):
+        input_tensor = mean_substraction(input_tensor)
+        
+        net, endpoints = nets.resnet_v1.resnet_v1_50(input_tensor,
+                                                  num_classes=None,
+                                                  is_training=is_training,
+                                                  global_pool=True,
+                                                  output_stride=None,
+                                                  reuse=None,
+                                                  scope='resnet_v1_50')
+        
+        desired_endpoints = [
+                'resnet_v1_50/conv1',
+                'resnet_v1_50/block1/unit_2/bottleneck_v1',
+                'resnet_v1_50/block2/unit_3/bottleneck_v1',
+                'resnet_v1_50/block3/unit_5/bottleneck_v1',
+                'resnet_v1_50/block4/unit_3/bottleneck_v1'
+            ]
+        
+        intermediate_layers = list()
+        for d in desired_endpoints:
+            intermediate_layers.append(endpoints[d])
+
+        return net, intermediate_layers

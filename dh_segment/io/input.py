@@ -7,7 +7,7 @@ from tqdm import tqdm
 from typing import Union, List
 from enum import Enum
 import pandas as pd
-from .input_utils import data_augmentation_fn, extract_patches_fn, load_and_resize_image, \
+from .input_utils import data_augmentation_fn, data_augmentation_fn_classification, extract_patches_fn, load_and_resize_image, \
     rotate_crop, resize_image, local_entropy
 
 
@@ -44,8 +44,13 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
         with tf.name_scope('patching'):
             patches_image = extract_patches_fn(input_image, training_params.patch_shape, offsets)
             patches_label = extract_patches_fn(label_image, training_params.patch_shape, offsets)
-
             return patches_image, patches_label
+        
+    # --- Map functions for image classification
+    def _make_patches_fn_classification(input_image: tf.Tensor, offsets: tuple) -> tf.Tensor:
+        with tf.name_scope('patching'):
+            patches_image = extract_patches_fn(input_image, training_params.patch_shape, offsets)
+            return patches_image
 
     # Load and resize images
     def _load_image_fn(image_filename, label_filename):
@@ -65,6 +70,19 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
             raise NotImplementedError
         input_image = load_and_resize_image(image_filename, 3, new_size)
         return input_image, label_image
+    
+    # Load and resize images for the image classification
+    def _load_image_fn_classification(image_filename, label):
+        if training_params.data_augmentation and training_params.input_resized_size > 0:
+            random_scaling = tf.random_uniform([],
+                                               np.maximum(1 - training_params.data_augmentation_max_scaling, 0),
+                                               1 + training_params.data_augmentation_max_scaling)
+            new_size = training_params.input_resized_size * random_scaling
+        else:
+            new_size = training_params.input_resized_size
+
+        input_image = load_and_resize_image(image_filename, 3, new_size)
+        return input_image, label
 
     # Data augmentation, patching
     def _scaling_and_patch_fn(input_image, label_image):
@@ -93,10 +111,42 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
                 batch_image = tf.expand_dims(input_image, axis=0)
                 batch_label = tf.expand_dims(label_image, axis=0)
         return tf.data.Dataset.from_tensor_slices((batch_image, batch_label))
+    
+    # Data augmentation, patching for image classification
+    def _scaling_and_patch_fn_classification(input_image, label):
+        if data_augmentation:
+            # Rotation of the original image
+            if training_params.data_augmentation_max_rotation > 0:
+                with tf.name_scope('random_rotation'):
+                    rotation_angle = tf.random_uniform([],
+                                                       -training_params.data_augmentation_max_rotation,
+                                                       training_params.data_augmentation_max_rotation)
+                    input_image = rotate_crop(input_image, rotation_angle,
+                                              minimum_shape=[(i * 3) // 2 for i in training_params.patch_shape],
+                                              interpolation='BILINEAR')
+
+        if make_patches:
+            # Offsets for patch extraction
+            offsets = (tf.random_uniform(shape=[], minval=0, maxval=1, dtype=tf.float32),
+                       tf.random_uniform(shape=[], minval=0, maxval=1, dtype=tf.float32))
+            # offsets = (0, 0)
+            batch_image = _make_patches_fn_classification(input_image, offsets)
+        else:
+            with tf.name_scope('formatting'):
+                batch_image = tf.expand_dims(input_image, axis=0)
+        dataset = tf.data.Dataset.from_tensor_slices(batch_image)
+        dataset = dataset.map(lambda x: (x, label))
+        return dataset
+
 
     # Data augmentation
     def _augment_data_fn(input_image, label_image): \
         return data_augmentation_fn(input_image, label_image, training_params.data_augmentation_flip_lr,
+                                    training_params.data_augmentation_flip_ud, training_params.data_augmentation_color)
+    
+    # Data augmentation
+    def _augment_data_fn_classification(input_image, label): \
+        return data_augmentation_fn_classification(input_image, label, training_params.data_augmentation_flip_lr,
                                     training_params.data_augmentation_flip_ud, training_params.data_augmentation_color)
 
     # Assign color to class id
@@ -107,6 +157,15 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
         elif prediction_type == utils.PredictionType.MULTILABEL:
             label_image = utils.multilabel_image_to_class(label_image, classes_file)
         output = {'images': input_image, 'labels': label_image}
+
+        if training_params.local_entropy_ratio > 0 and prediction_type == utils.PredictionType.CLASSIFICATION:
+            output['weight_maps'] = local_entropy(tf.equal(label_image, 1),
+                                                  sigma=training_params.local_entropy_sigma)
+        return output
+    
+    # Assign color to class id
+    def _assign_color_to_class_id_classification(input_image, label):
+        output = {'images': input_image, 'labels': label}
 
         if training_params.local_entropy_ratio > 0 and prediction_type == utils.PredictionType.CLASSIFICATION:
             output['weight_maps'] = local_entropy(tf.equal(label_image, 1),
@@ -160,10 +219,12 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
     for img_filename in input_image_filenames:
         if not os.path.exists(img_filename):
             raise FileNotFoundError(img_filename)
-    if has_labelled_data:
-        for label_filename in label_image_filenames:
-            if not os.path.exists(label_filename):
-                raise FileNotFoundError(label_filename)
+    
+    #commented for image classification
+    #if has_labelled_data:
+        #for label_filename in label_image_filenames:
+        #    if not os.path.exists(label_filename):
+        #        raise FileNotFoundError(label_filename)
 
     # Tensorflow input_fn
     def fn():
@@ -175,16 +236,21 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
             dataset = dataset.map(lambda filename: {'images': load_and_resize_image(filename, 3,
                                                                                     training_params.input_resized_size)})
         else:
-            encoded_filenames = [(i.encode(), l.encode()) for i, l in zip(input_image_filenames, label_image_filenames)]
+            encoded_filenames = [(i.encode(), l) for i, l in zip(input_image_filenames, label_image_filenames)]
             dataset = tf.data.Dataset.from_generator(lambda: tqdm(utils.shuffled(encoded_filenames), desc='Dataset'),
-                                                         (tf.string, tf.string), (tf.TensorShape([]), tf.TensorShape([])))
+                                                         (tf.string, tf.int32), (tf.TensorShape([]), tf.TensorShape([])))
 
             dataset = dataset.repeat(count=num_epochs)
-            dataset = dataset.map(_load_image_fn, num_threads).flat_map(_scaling_and_patch_fn)
-
+            
+            # Original implementation
+            #dataset = dataset.map(_load_image_fn, num_threads).flat_map(_scaling_and_patch_fn)
+            
+            # image classification tweak
+            dataset = dataset.map(_load_image_fn_classification, num_threads).flat_map(_scaling_and_patch_fn_classification)
+                             
             if data_augmentation:
-                dataset = dataset.map(_augment_data_fn, num_threads)
-            dataset = dataset.map(_assign_color_to_class_id, num_threads)
+                dataset = dataset.map(_augment_data_fn_classification, num_threads)
+                dataset = dataset.map(_assign_color_to_class_id_classification, num_threads)
 
         # Save original size of images
         dataset = dataset.map(lambda d: {'shapes': tf.shape(d['images'])[:2], **d})
@@ -204,7 +270,9 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
         }
         if 'labels' in dataset.output_shapes.keys():
             output_shapes_label = dataset.output_shapes['labels']
-            padded_shapes['labels'] = base_shape_images + list(output_shapes_label[2:])
+            #commented image classification
+            #padded_shapes['labels'] = base_shape_images + list(output_shapes_label[2:])
+            padded_shapes['labels'] = []
         if 'weight_maps' in dataset.output_shapes.keys():
             padded_shapes['weight_maps'] = base_shape_images
 
@@ -217,19 +285,20 @@ def input_fn(input_data: Union[str, List[str]], params: dict, input_label_dir: s
             tf.summary.image('input/image',
                              tf.image.resize_images(prepared_batch['images'], shape_summary_img),
                              max_outputs=1)
-            if 'labels' in prepared_batch:
-                label_export = prepared_batch['labels']
-                if prediction_type == utils.PredictionType.CLASSIFICATION:
-                    label_export = utils.class_to_label_image(label_export, classes_file)
-                if prediction_type == utils.PredictionType.MULTILABEL:
-                    label_export = tf.cast(label_export, tf.int32)
-                    label_export = utils.multiclass_to_label_image(label_export, classes_file)
-                tf.summary.image('input/label',
-                                 tf.image.resize_images(label_export, shape_summary_img), max_outputs=1)
+           # if 'labels' in prepared_batch:
+                #label_export = prepared_batch['labels']
+                #if prediction_type == utils.PredictionType.CLASSIFICATION:
+                  #commented image classification
+                  #  label_export = utils.class_to_label_image(label_export, classes_file)
+                #if prediction_type == utils.PredictionType.MULTILABEL:
+                #    label_export = tf.cast(label_export, tf.int32)
+                #    label_export = utils.multiclass_to_label_image(label_export, classes_file)
+                #tf.summary.image('input/label',
+            #                     tf.image.resize_images(label_export, shape_summary_img), max_outputs=1)
             if 'weight_maps' in prepared_batch:
                 tf.summary.image('input/weight_map',
                                  tf.image.resize_images(prepared_batch['weight_maps'][:, :, :, None],
-                                                        shape_summary_img),
+                                                         shape_summary_img),
                                  max_outputs=1)
 
         return prepared_batch, prepared_batch.get('labels')

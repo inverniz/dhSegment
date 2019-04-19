@@ -36,6 +36,36 @@ def data_augmentation_fn(input_image: tf.Tensor, label_image: tf.Tensor, flip_lr
                 input_image = tf.image.random_hue(input_image, max_delta=0.1)
                 input_image = tf.image.random_saturation(input_image, lower=0.8, upper=1.2)
         return input_image, label_image
+    
+def data_augmentation_fn_classification(input_image: tf.Tensor, label: tf.Tensor, flip_lr: bool=True,
+                         flip_ud: bool=True, color: bool=True) -> (tf.Tensor, tf.Tensor):
+    """Applies data augmentation to both images and label images.
+    Includes left-right flip, up-down flip and color change.
+
+    :param input_image: images to be augmented [B, H, W, C]
+    :param label_image: corresponding label images [B, H, W, C]
+    :param flip_lr: option to flip image in left-right direction
+    :param flip_ud: option to flip image in up-down direction
+    :param color: option to change color of images
+    :return: the tuple (augmented images, augmented label images) [B, H, W, C]
+    """
+    with tf.name_scope('DataAugmentation'):
+        if flip_lr:
+            with tf.name_scope('random_flip_lr'):
+                sample = tf.random_uniform([], 0, 1)
+                input_image = tf.cond(sample > 0.5, lambda: tf.image.flip_left_right(input_image), lambda: input_image)
+        if flip_ud:
+            with tf.name_scope('random_flip_ud'):
+                sample = tf.random_uniform([], 0, 1)
+                input_image = tf.cond(sample > 0.5, lambda: tf.image.flip_up_down(input_image), lambda: input_image)
+
+        chanels = input_image.get_shape()[-1]
+        if color:
+            input_image = tf.image.random_contrast(input_image, lower=0.8, upper=1.0)
+            if chanels == 3:
+                input_image = tf.image.random_hue(input_image, max_delta=0.1)
+                input_image = tf.image.random_saturation(input_image, lower=0.8, upper=1.2)
+        return input_image, label
 
 
 def rotate_crop(image: tf.Tensor, rotation: float, crop: bool=True, minimum_shape: Tuple[int, int]=[0, 0],
