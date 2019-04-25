@@ -1,9 +1,9 @@
 import os
 import tensorflow as tf
 # Tensorflow logging level
-from logging import WARNING  # import  DEBUG, INFO, ERROR for more/less verbosity
+from logging import DEBUG  # import  DEBUG, INFO, ERROR for more/less verbosity
 
-tf.logging.set_verbosity(WARNING)
+tf.logging.set_verbosity(DEBUG)
 from dh_segment import estimator_fn, utils
 from dh_segment.io import input
 import json
@@ -37,7 +37,7 @@ def default_config():
     if prediction_type == utils.PredictionType.CLASSIFICATION:
         assert classes_file is not None
         #model_params['n_classes'] = utils.get_n_classes_from_file(classes_file)
-        model_params['n_classes'] = 2
+        model_params['n_classes'] = 33
     elif prediction_type == utils.PredictionType.REGRESSION:
         model_params['n_classes'] = 1
     elif prediction_type == utils.PredictionType.MULTILABEL:
