@@ -89,7 +89,7 @@ def model_fn(mode, features, labels, params):
         #network_output = tf.Print(network_output, [tf.nn.softmax(tf.squeeze(network_output))])
         prediction_probs = tf.nn.softmax(tf.squeeze(network_output), name='softmax')
         prediction_labels = tf.argmax(tf.squeeze(network_output), axis=-1, name='label_preds')
-        #prediction_labels = tf.Print(prediction_labels, [labels])
+        #prediction_labels = tf.Print(prediction_labels, [prediction_labels, prediction_probs])
         predictions = {'probs': prediction_probs, 'labels': prediction_labels}
         
         # Added by me: second dictionary
@@ -243,30 +243,23 @@ def model_fn(mode, features, labels, params):
     # ----------
     if mode == tf.estimator.ModeKeys.EVAL:
         if prediction_type == PredictionType.CLASSIFICATION:
-            metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels),
-                       'eval/precision': tf.metrics.precision(labels, predictions=prediction_labels),
-                       'eval/recall': tf.metrics.recall(labels, predictions=prediction_labels)
+            metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels)
                       }
             
-            #labels = tf.Print(labels, [labels])
-            #nr_classes = np.unique(labels).shape[0]
+            #nr_classes = 2
             
             #for class_id in range(nr_classes):
-            #    label_indices = np.where(labels == class_id)
-            #    class_labels = labels[label_indices]
-            #    class_prediction_labels = prediction_labels[label_indices]
+                #precision_key = 'eval/precision_class_{}'.format(class_id)
+                #recall_key = 'eval/recall_class_{}'.format(class_id)
+                #auc_key = 'eval/auc_class_{}'.format(class_id)
                 
-            #    precision_key = 'eval/precision_class_{}'.format(class_id)
-            #    recall_key = 'eval/recall_class_{}'.format(class_id)
-            #    auc_key = 'eval/auc_class_{}'.format(class_id)
+                #precision_value = tf.metrics.precision_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
+                #recall_value = tf.metrics.recall_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
+                #auc_value = tf.metrics.auc_recall_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
                 
-            #    precision_value = tf.metrics.precision(class_labels, predictions=class_prediction_labels)
-            #    recall_value = tf.metrics.recall(class_labels, predictions=class_prediction_labels)
-            #    auc_value = tf.metrics.auc(class_labels, predictions=class_prediction_labels)
-                
-            #    metrics[precision_key] = precision_value
-            #    metrics[recall_key] = recall_value
-            #    metrics[auc_key] = auc_value
+                #metrics[precision_key] = precision_value
+                #metrics[recall_key] = recall_value
+                #metrics[auc_key] = auc_value
         elif prediction_type == PredictionType.REGRESSION:
             metrics = {'eval/accuracy': tf.metrics.mean_squared_error(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.MULTILABEL:
