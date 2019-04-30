@@ -86,10 +86,9 @@ def model_fn(mode, features, labels, params):
     intermediate_layers_dict = {}
     if prediction_type == PredictionType.CLASSIFICATION:
         #squeezed for image classification
-        #network_output = tf.Print(network_output, [tf.nn.softmax(tf.squeeze(network_output))])
+        #network_output = tf.Print(network_output, [tf.shape(tf.nn.softmax(tf.squeeze(network_output))), tf.shape(labels)])
         prediction_probs = tf.nn.softmax(tf.squeeze(network_output), name='softmax')
         prediction_labels = tf.argmax(tf.squeeze(network_output), axis=-1, name='label_preds')
-        #prediction_labels = tf.Print(prediction_labels, [prediction_labels, prediction_probs])
         predictions = {'probs': prediction_probs, 'labels': prediction_labels}
         
         # Added by me: second dictionary
@@ -246,20 +245,17 @@ def model_fn(mode, features, labels, params):
             metrics = {'eval/accuracy': tf.metrics.accuracy(labels, predictions=prediction_labels)
                       }
             
-            #nr_classes = 2
+            nr_classes = params['model_params']['n_classes']
             
-            #for class_id in range(nr_classes):
-                #precision_key = 'eval/precision_class_{}'.format(class_id)
-                #recall_key = 'eval/recall_class_{}'.format(class_id)
-                #auc_key = 'eval/auc_class_{}'.format(class_id)
+            for class_id in range(nr_classes):
+                precision_key = 'eval/precision_class_{}'.format(class_id)
+                recall_key = 'eval/recall_class_{}'.format(class_id)
                 
-                #precision_value = tf.metrics.precision_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
-                #recall_value = tf.metrics.recall_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
-                #auc_value = tf.metrics.auc_recall_at_k(labels, predictions=prediction_probs, k=1, class_id=class_id)
+                precision_value = tf.metrics.precision_at_k(tf.expand_dims(tf.cast(labels, tf.int64), axis=0), predictions=tf.expand_dims(prediction_probs, axis=0), k=1, class_id=class_id)
+                recall_value = tf.metrics.recall_at_k(tf.expand_dims(tf.cast(labels, tf.int64), axis=0), predictions=tf.expand_dims(prediction_probs, axis=0), k=1, class_id=class_id)
                 
-                #metrics[precision_key] = precision_value
-                #metrics[recall_key] = recall_value
-                #metrics[auc_key] = auc_value
+                metrics[precision_key] = precision_value
+                metrics[recall_key] = recall_value
         elif prediction_type == PredictionType.REGRESSION:
             metrics = {'eval/accuracy': tf.metrics.mean_squared_error(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.MULTILABEL:
