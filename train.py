@@ -36,8 +36,7 @@ def default_config():
     training_params = utils.TrainingParams().to_dict()  # Training parameters
     if prediction_type == utils.PredictionType.CLASSIFICATION:
         assert classes_file is not None
-        #model_params['n_classes'] = utils.get_n_classes_from_file(classes_file)
-        model_params['n_classes'] = 33
+        model_params['n_classes'] = utils.get_n_classes(classes_file)
     elif prediction_type == utils.PredictionType.REGRESSION:
         model_params['n_classes'] = 1
     elif prediction_type == utils.PredictionType.MULTILABEL:

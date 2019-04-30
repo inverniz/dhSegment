@@ -74,6 +74,13 @@ def get_classes_color_from_file(classes_file: str) -> np.ndarray:
     assert result.shape[1] == 3, "Color file should represent RGB values"
     return result
 
+def get_n_classes(classes_file: str) -> np.ndarray:
+    if not os.path.exists(classes_file):
+        raise FileNotFoundError(classes_file)
+    result = np.loadtxt(classes_file).astype(np.int32)
+    n_classes = result[0]
+    return n_classes
+
 
 def get_n_classes_from_file(classes_file: str) -> int:
     return get_classes_color_from_file(classes_file).shape[0]
