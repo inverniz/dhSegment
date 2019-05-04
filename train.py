@@ -66,6 +66,7 @@ def run(train_data, eval_data, model_output_dir, gpu, training_params, _config):
 
     session_config = tf.ConfigProto()
     session_config.gpu_options.visible_device_list = str(gpu)
+    session_config.gpu_options.allow_growth = True
     session_config.gpu_options.per_process_gpu_memory_fraction = 0.9
     estimator_config = tf.estimator.RunConfig().replace(session_config=session_config,
                                                         save_summary_steps=10,
