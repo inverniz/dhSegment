@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tf_metrics
 from .utils import PredictionType, ModelParams, TrainingParams, \
     class_to_label_image, multiclass_to_label_image
 import numpy as np
@@ -246,40 +247,27 @@ def model_fn(mode, features, labels, params):
                       }
             
             nr_classes = params['model_params']['n_classes']
-            mean_precision = tf.constant(0,dtype=tf.float64)
-            mean_recall = tf.constant(0,dtype=tf.float64)
-            zero = tf.constant(0,dtype=tf.float64)
-            non_present_classes = tf.constant(0, dtype=tf.float64)
+            
             for class_id in range(nr_classes):
+                condition = tf.logical_or(tf.equal(class_id, tf.squeeze(labels)), tf.equal(class_id, tf.cast(tf.squeeze(prediction_labels), tf.int32)))
+                weights = tf.cond(condition, lambda: 1, lambda:0)
                 precision_key = 'eval/precision_class_{}'.format(class_id)
                 recall_key = 'eval/recall_class_{}'.format(class_id)
                 
-                precision_value = tf.metrics.precision_at_k(tf.expand_dims(tf.cast(labels, tf.int64), axis=0), predictions=tf.expand_dims(prediction_probs, axis=0), k=1, class_id=class_id)
-                recall_value = tf.metrics.recall_at_k(tf.expand_dims(tf.cast(labels, tf.int64), axis=0), predictions=tf.expand_dims(prediction_probs, axis=0), k=1, class_id=class_id)
+                pred = tf.reshape(tf.expand_dims(prediction_labels, axis=0), [1])
+                lab = tf.reshape(tf.expand_dims(labels, axis=0), [1])
+                weights = tf.reshape(tf.expand_dims(weights, axis=0), [1])
+                precision = tf_metrics.precision(labels=lab, predictions=pred, num_classes=nr_classes, pos_indices= [class_id], weights = weights, average='micro')
+                recall = tf_metrics.recall(labels=lab, predictions=pred, num_classes=nr_classes, pos_indices= [class_id], weights = weights, average='micro')
+                metrics[precision_key] = precision
+                metrics[recall_key] = recall
                 
-                non_present_classes = tf.cond(tf.is_nan(precision_value[0]), lambda: non_present_classes+1, lambda: non_present_classes)
-     
-                mean_precision = tf.add(mean_precision, tf.where(tf.is_nan(precision_value[0]), zero, precision_value[0]))
-                mean_recall = tf.add(mean_recall, tf.where(tf.is_nan(recall_value[0]), zero, recall_value[0]))
-                #mean_recall = tf.Print(mean_recall, [mean_recall])
-                
-                metrics[precision_key] = precision_value
-                metrics[recall_key] = recall_value
-        
             precision_key = 'eval/mean_precision_per_class'
             recall_key = 'eval/mean_recall_per_class'
-        
-            def mean_metrics(mean_precision, mean_recall, metrics):
-                mean_precision = tf.div(mean_precision, (nr_classes-non_present_classes))
-                mean_recall = tf.div(mean_recall, (nr_classes-non_present_classes))
-                mean_recall = tf.Print(mean_recall, [mean_recall])
-                
-                metrics[precision_key] = tf.metrics.mean(mean_precision)
-                metrics[recall_key] = tf.metrics.mean(mean_recall)
-                
-                return metrics
-            
-            metrics = tf.cond(non_present_classes < nr_classes, lambda: mean_metrics(mean_precision, mean_recall, metrics), lambda: metrics)
+            mean_precision = tf_metrics.precision(labels=lab, predictions=pred, num_classes=nr_classes, average='macro')
+            mean_recall = tf_metrics.recall(labels=lab, predictions=pred, num_classes=nr_classes, average='macro')
+            metrics[precision_key] = mean_precision
+            metrics[recall_key] = mean_recall
         elif prediction_type == PredictionType.REGRESSION:
             metrics = {'eval/accuracy': tf.metrics.mean_squared_error(labels, predictions=prediction_labels)}
         elif prediction_type == PredictionType.MULTILABEL:
