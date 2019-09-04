@@ -262,10 +262,17 @@ def model_fn(mode, features, labels, params):
                 metrics[precision_key] = precision
                 metrics[recall_key] = recall
                 
-            precision_key = 'eval/mean_precision_per_class'
-            recall_key = 'eval/mean_recall_per_class'
+            precision_key = 'eval/macro_mean_precision_per_class'
+            recall_key = 'eval/macro_mean_recall_per_class'
             mean_precision = tf_metrics.precision(labels=lab, predictions=pred, num_classes=nr_classes, average='macro')
             mean_recall = tf_metrics.recall(labels=lab, predictions=pred, num_classes=nr_classes, average='macro')
+            metrics[precision_key] = mean_precision
+            metrics[recall_key] = mean_recall
+            
+            precision_key = 'eval/weighted_mean_precision_per_class'
+            recall_key = 'eval/weighted_mean_recall_per_class'
+            mean_precision = tf_metrics.precision(labels=lab, predictions=pred, num_classes=nr_classes, average='weighted')
+            mean_recall = tf_metrics.recall(labels=lab, predictions=pred, num_classes=nr_classes, average='weighted')
             metrics[precision_key] = mean_precision
             metrics[recall_key] = mean_recall
         elif prediction_type == PredictionType.REGRESSION:

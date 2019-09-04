@@ -95,7 +95,9 @@ def run(train_data, eval_data, model_output_dir, gpu, training_params, _config):
     # Configure exporter
     serving_input_fn = input.serving_input_filename(training_params.input_resized_size)
     if eval_data is not None:
-        exporter = tf.estimator.BestExporter(serving_input_receiver_fn=serving_input_fn, exports_to_keep=2)
+        #exporter = tf.estimator.BestExporter(serving_input_receiver_fn=serving_input_fn, exports_to_keep=2)
+        exporter = tf.estimator.LatestExporter(name='SimpleExporter', serving_input_receiver_fn=serving_input_fn,
+                                               exports_to_keep=2)
     else:
         exporter = tf.estimator.LatestExporter(name='SimpleExporter', serving_input_receiver_fn=serving_input_fn,
                                                exports_to_keep=5)
